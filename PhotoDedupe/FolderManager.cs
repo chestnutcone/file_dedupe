@@ -18,9 +18,9 @@ namespace PhotoDedupe
             RootDir = rootDir;
         }
         
-        ConcurrentDictionary<string, List<string>> FileNames;
-        string RootDir;
-        bool CompletedScan = false;
+        protected ConcurrentDictionary<string, List<string>> FileNames;
+        protected string RootDir;
+        protected bool CompletedScan = false;
 
         /// <summary>
         /// Scan all folders recursively from root. Builds a dictinoary FileNames with key of file hash and value list of paths
@@ -41,14 +41,14 @@ namespace PhotoDedupe
                 Console.Write($"Perc: {Math.Round(perc)}");
             }
             CompletedScan = true;
-            Report();
+            Report(FileNames);
         }
 
         /// <summary>
         /// Remove duplicate file (file with same hash)
         /// </summary>
         /// <returns></returns>
-        public async Task RemoveDeleted()
+        public async Task RemoveDeleted(ConcurrentDictionary<string, List<string>> dict)
         {
             if (!CompletedScan)
             {
@@ -57,8 +57,8 @@ namespace PhotoDedupe
 
             // lets keep the first one
             Single idx = 0;
-            int max_count = FileNames.Count;
-            foreach(var (key, val) in FileNames)
+            int max_count = dict.Count;
+            foreach(var (key, val) in dict)
             {
                 idx++;
 
@@ -68,7 +68,7 @@ namespace PhotoDedupe
                     {
                         File.Delete(val[i]);
                     }
-                    FileNames.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
+                    dict.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
                 }
                 if (idx % 10 == 0)
                 {
@@ -76,14 +76,14 @@ namespace PhotoDedupe
                 } 
             }
 
-            Report();
+            Report(dict);
         }
 
-        private void Report()
+        protected void Report(ConcurrentDictionary<string, List<string>> dict)
         {
             var uniq_count = 0;
             var dup_count = 0;
-            foreach(var item in FileNames.Values )
+            foreach(var item in dict.Values )
             {
                 if (item.Count > 1)
                 {
@@ -106,7 +106,7 @@ namespace PhotoDedupe
         /// <returns></returns>
         public List<Task> Walk(string workDir)
         {
-            var files = Directory.GetFiles(workDir);
+            var files = FilterFiles(Directory.GetFiles(workDir));
             foreach (var file in files)
             {
                 var fileHash = GetHash(file);
@@ -125,6 +125,11 @@ namespace PhotoDedupe
             }
 
             return tasks;
+        }
+        
+        protected virtual List<string> FilterFiles(string[] filenames)
+        {
+            return new List<string>(filenames);
         }
 
         /// <summary>
