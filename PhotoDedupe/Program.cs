@@ -5,4 +5,4 @@ Console.WriteLine("Hello, World!");
 var path = "C:\\Users\\Oliver\\source\\repos\\PhotoDedupe\\test_folder";
 
 var runner = new FolderManager(path);
-await runner.Run();
+await runner.RemoveDeleted();

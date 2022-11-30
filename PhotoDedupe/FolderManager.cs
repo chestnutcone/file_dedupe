@@ -20,7 +20,12 @@ namespace PhotoDedupe
         
         ConcurrentDictionary<string, List<string>> FileNames;
         string RootDir;
+        bool CompletedScan = false;
 
+        /// <summary>
+        /// Scan all folders recursively from root. Builds a dictinoary FileNames with key of file hash and value list of paths
+        /// </summary>
+        /// <returns></returns>
         public async Task Run()
         {
             var tasks = Walk(RootDir);
@@ -35,6 +40,42 @@ namespace PhotoDedupe
                 perc *= 100;
                 Console.Write($"Perc: {Math.Round(perc)}");
             }
+            CompletedScan = true;
+            Report();
+        }
+
+        /// <summary>
+        /// Remove duplicate file (file with same hash)
+        /// </summary>
+        /// <returns></returns>
+        public async Task RemoveDeleted()
+        {
+            if (!CompletedScan)
+            {
+                await Run();
+            }
+
+            // lets keep the first one
+            Single idx = 0;
+            int max_count = FileNames.Count;
+            foreach(var (key, val) in FileNames)
+            {
+                idx++;
+
+                if (val.Count > 1)
+                {
+                    for(var i=1; i<val.Count; i++)
+                    {
+                        File.Delete(val[i]);
+                    }
+                    FileNames.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
+                }
+                if (idx % 10 == 0)
+                {
+                    Console.Write($"Perc: {Math.Round(idx / max_count)}");
+                } 
+            }
+
             Report();
         }
 
@@ -58,6 +99,11 @@ namespace PhotoDedupe
             Console.WriteLine($"Uniq: {uniq_count}, Dup: {dup_count}, Total: {total}, Dup perc: {perc}");
         }
 
+        /// <summary>
+        /// Walk folder recursively and add tasks to list to be awaited
+        /// </summary>
+        /// <param name="workDir"></param>
+        /// <returns></returns>
         public List<Task> Walk(string workDir)
         {
             var files = Directory.GetFiles(workDir);
@@ -80,6 +126,12 @@ namespace PhotoDedupe
 
             return tasks;
         }
+
+        /// <summary>
+        /// Gets file hash
+        /// </summary>
+        /// <param name="filepath"></param>
+        /// <returns></returns>
         public static string GetHash(string filepath)
         {
             using (var md5 = MD5.Create())
