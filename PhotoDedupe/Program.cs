@@ -2,9 +2,9 @@
 using PhotoDedupe;
 
 Console.WriteLine("Hello, World!");
-var path = "C:\\Users\\Oliver\\source\\repos\\PhotoDedupe\\test_folder";
+var path = "F:\\Canada Photos";
 
 var runner = new ImageManager(path);
 //await runner.FindSimilarImages();
 //await runner.RemoveDeleted(runner.FileNames);
-runner.Run();
+await runner.Run();

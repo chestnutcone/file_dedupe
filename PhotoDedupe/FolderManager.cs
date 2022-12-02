@@ -8,6 +8,8 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Security.Cryptography;
 using Konsole;
+using System.Diagnostics;
+using System.IO.Hashing;
 
 namespace PhotoDedupe
 {
@@ -29,7 +31,11 @@ namespace PhotoDedupe
         /// <returns></returns>
         public async Task Run()
         {
-            var tasks = Walk(RootDir);
+            Console.WriteLine("Start searching directories");
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start();
+
+            var tasks = Walk(RootDir, true);
             var task = Task.WhenAll(tasks);
             // now i can make progress
             var pb = new ProgressBar(tasks.Count);
@@ -39,7 +45,11 @@ namespace PhotoDedupe
                 var completed_tasks = tasks.Where(t => t.IsCompleted).ToList();
                 pb.Refresh(completed_tasks.Count, "Walking");
             }
+
             CompletedScan = true;
+            stopwatch.Stop();
+            ReportTime(stopwatch, "Walking dir took");
+
             Report(FileNames);
         }
 
@@ -57,6 +67,8 @@ namespace PhotoDedupe
             // lets keep the first one
             int idx = 0;
             var pb = new ProgressBar(dict.Count);
+            Stopwatch stopwatch = new Stopwatch();
+            stopwatch.Start();
             foreach(var (key, val) in dict)
             {
                 idx++;
@@ -74,7 +86,8 @@ namespace PhotoDedupe
                     pb.Refresh(idx, "Deleting");
                 } 
             }
-
+            stopwatch.Stop();
+            ReportTime(stopwatch, "Deleting duplicate files took");
             Report(dict);
         }
 
@@ -98,28 +111,54 @@ namespace PhotoDedupe
             Console.WriteLine($"Uniq: {uniq_count}, Dup: {dup_count}, Total: {total}, Dup perc: {perc}");
         }
 
+        protected void ReportTime(Stopwatch stopwatch, string prefix)
+        {
+            TimeSpan ts = stopwatch.Elapsed;
+            string elapsedTime = String.Format($"{prefix} {ts.Hours}:{ts.Minutes}:{ts.Seconds}.{ts.Milliseconds / 10}");
+            Console.WriteLine(elapsedTime);
+        }
+
+        /// <summary>
+        /// puts all files into the same flat directory
+        /// </summary>
+        public void Flatten(ConcurrentDictionary<string, List<string>> dict)
+        {
+            foreach(var item in dict.Values)
+            {
+                
+            }
+
+        }
+
         /// <summary>
         /// Walk folder recursively and add tasks to list to be awaited
         /// </summary>
         /// <param name="workDir"></param>
         /// <returns></returns>
-        public List<Task> Walk(string workDir)
+        public List<Task> Walk(string workDir, bool displayProgressBar=false)
         {
             var files = FilterFiles(Directory.GetFiles(workDir));
-            foreach (var file in files)
+            var tasks = new List<Task>();
+            Parallel.ForEach(files, file =>
             {
-                var fileHash = GetHash(file);
+                var fileHash = GetHashCRC32(file);
                 FileNames.AddOrUpdate(
                     fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
-            }
+            });
 
             var folders = Directory.GetDirectories(workDir);
-            var tasks = new List<Task>();
+
+            var pb = displayProgressBar ? new ProgressBar(folders.Length) : null;
+            int count = 0;
             foreach (var folder in folders)
             {
                 foreach (var task in Walk(folder))
                 {
                     tasks.Add(task);
+                }
+                if (pb != null)
+                {
+                    pb.Refresh(count++, folder);
                 }
             }
 
@@ -132,11 +171,11 @@ namespace PhotoDedupe
         }
 
         /// <summary>
-        /// Gets file hash
+        /// Gets file hash MD5
         /// </summary>
         /// <param name="filepath"></param>
         /// <returns></returns>
-        public static string GetHash(string filepath)
+        public static string GetHashMD5(string filepath)
         {
             using (var md5 = MD5.Create())
             {
@@ -148,5 +187,16 @@ namespace PhotoDedupe
             }
         }
 
+        /// <summary>
+        /// Gets file hash Crc-32
+        /// </summary>
+        /// <param name="filepath"></param>
+        /// <returns></returns>
+        public static string GetHashCRC32(string filepath)
+        {
+            var data = File.ReadAllBytes(filepath);
+            var hash = Crc32.Hash(data);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
     }
 }
