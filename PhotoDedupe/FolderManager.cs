@@ -7,6 +7,7 @@ using System.Security;
 using System.Text;
 using System.Threading.Tasks;
 using System.Security.Cryptography;
+using Konsole;
 
 namespace PhotoDedupe
 {
@@ -18,7 +19,7 @@ namespace PhotoDedupe
             RootDir = rootDir;
         }
         
-        protected ConcurrentDictionary<string, List<string>> FileNames;
+        public ConcurrentDictionary<string, List<string>> FileNames;
         protected string RootDir;
         protected bool CompletedScan = false;
 
@@ -30,15 +31,13 @@ namespace PhotoDedupe
         {
             var tasks = Walk(RootDir);
             var task = Task.WhenAll(tasks);
-            var total_tasks = tasks.Count;
             // now i can make progress
+            var pb = new ProgressBar(tasks.Count);
             while (!task.IsCompleted)
             {
                 await Task.Delay(250);
                 var completed_tasks = tasks.Where(t => t.IsCompleted).ToList();
-                var perc = (Single)completed_tasks.Count / total_tasks;
-                perc *= 100;
-                Console.Write($"Perc: {Math.Round(perc)}");
+                pb.Refresh(completed_tasks.Count, "Walking");
             }
             CompletedScan = true;
             Report(FileNames);
@@ -56,8 +55,8 @@ namespace PhotoDedupe
             }
 
             // lets keep the first one
-            Single idx = 0;
-            int max_count = dict.Count;
+            int idx = 0;
+            var pb = new ProgressBar(dict.Count);
             foreach(var (key, val) in dict)
             {
                 idx++;
@@ -72,7 +71,7 @@ namespace PhotoDedupe
                 }
                 if (idx % 10 == 0)
                 {
-                    Console.Write($"Perc: {Math.Round(idx / max_count)}");
+                    pb.Refresh(idx, "Deleting");
                 } 
             }
 
