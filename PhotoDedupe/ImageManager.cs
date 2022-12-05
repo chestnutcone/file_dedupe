@@ -7,6 +7,7 @@ using System.Drawing;
 using System.Threading.Tasks;
 using System.Net.WebSockets;
 using System.Collections.Concurrent;
+using PhotoDedupe.Data;
 
 namespace PhotoDedupe
 {
@@ -18,21 +19,29 @@ namespace PhotoDedupe
         /// <param name="rootDir"></param>
         public ImageManager(string rootDir) : base(rootDir)
         {
+            ImageSimilarity = new ImageSimilarity();
         }
 
-        public ConcurrentDictionary<string, List<string>> SimilarityHash = new ConcurrentDictionary<string, List<string>>();
+        public IDataHolder<string, List<string>> ImageSimilarity { get; }
 
         protected override List<string> FilterFiles(string[] filenames)
         {
             var filteredList = new List<string>();
             foreach (string file in filenames)
             {
-                if (file.EndsWith(".jpeg") || file.EndsWith(".jpg"))
+                if (ExtAllowed(file))
                 {
                     filteredList.Add(file);
                 }
             }
             return filteredList;
+        }
+
+        private bool ExtAllowed(string filename)
+        {
+            var allowedExt = new HashSet<string>(){ ".jpeg", ".jpg", ".png" };
+            var fileExt = Path.GetExtension(filename);
+            return allowedExt.Contains(fileExt.ToLower());
         }
 
         public async Task FindSimilarImages()
@@ -43,10 +52,10 @@ namespace PhotoDedupe
             }
             
             // build hash for every image available
-            foreach(var files in FileNames.Values)
+            foreach(var files in FileDuplicates.Data.Values)
             {
                 var hash = BrightnessHash(files[0]);
-                SimilarityHash.AddOrUpdate(hash, files, (k, v) => {
+                ImageSimilarity.Data.AddOrUpdate(hash, files, (k, v) => {
                     foreach (var file in files)
                     {
                         v.Add(file);
@@ -55,7 +64,7 @@ namespace PhotoDedupe
                 });
             }
             Console.WriteLine("Similar Images");
-            Report(SimilarityHash);
+            ImageSimilarity.Report();
         }
 
         /// <summary>

@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using Konsole;
 using System.Diagnostics;
 using System.IO.Hashing;
+using PhotoDedupe.Data;
 
 namespace PhotoDedupe
 {
@@ -17,13 +18,17 @@ namespace PhotoDedupe
     {
         public FolderManager(string rootDir)
         {
-            FileNames = new ConcurrentDictionary<string, List<string>>();
             RootDir = rootDir;
+            FileDuplicates = new FileDuplicates();
+            FileSizes = new FileSizes();
         }
-        
-        public ConcurrentDictionary<string, List<string>> FileNames;
+        public IDataHolder<string, List<string>> FileDuplicates { get; }
+        public IDataHolder<string, long> FileSizes { get; }
+
         protected string RootDir;
         protected bool CompletedScan = false;
+        public delegate void ProcessFileDel(List<string> filepaths);
+
 
         /// <summary>
         /// Scan all folders recursively from root. Builds a dictinoary FileNames with key of file hash and value list of paths
@@ -35,7 +40,10 @@ namespace PhotoDedupe
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
 
-            var tasks = Walk(RootDir, true);
+            ProcessFileDel processFileDel = GetHashOfFiles;
+            processFileDel += GetSizeOfFiles;
+
+            var tasks = Walk(RootDir, processFileDel, true);
             var task = Task.WhenAll(tasks);
             // now i can make progress
             var pb = new ProgressBar(tasks.Count);
@@ -50,14 +58,15 @@ namespace PhotoDedupe
             stopwatch.Stop();
             ReportTime(stopwatch, "Walking dir took");
 
-            Report(FileNames);
+            FileDuplicates.Report();
+            FileSizes.Report();
         }
 
         /// <summary>
         /// Remove duplicate file (file with same hash)
         /// </summary>
         /// <returns></returns>
-        public async Task RemoveDeleted(ConcurrentDictionary<string, List<string>> dict)
+        public async Task RemoveDeleted()
         {
             if (!CompletedScan)
             {
@@ -66,10 +75,10 @@ namespace PhotoDedupe
 
             // lets keep the first one
             int idx = 0;
-            var pb = new ProgressBar(dict.Count);
+            var pb = new ProgressBar(FileDuplicates.Data.Count);
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
-            foreach(var (key, val) in dict)
+            foreach(var (key, val) in FileDuplicates.Data)
             {
                 idx++;
 
@@ -79,7 +88,7 @@ namespace PhotoDedupe
                     {
                         File.Delete(val[i]);
                     }
-                    dict.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
+                   FileDuplicates.Data.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
                 }
                 if (idx % 10 == 0)
                 {
@@ -88,28 +97,9 @@ namespace PhotoDedupe
             }
             stopwatch.Stop();
             ReportTime(stopwatch, "Deleting duplicate files took");
-            Report(dict);
+            FileDuplicates.Report();
         }
 
-        protected void Report(ConcurrentDictionary<string, List<string>> dict)
-        {
-            var uniq_count = 0;
-            var dup_count = 0;
-            foreach(var item in dict.Values )
-            {
-                if (item.Count > 1)
-                {
-                    dup_count += item.Count;
-                }
-                else
-                {
-                    uniq_count++;
-                }
-            }
-            var total = uniq_count + dup_count;
-            var perc = (Single) dup_count / total;
-            Console.WriteLine($"Uniq: {uniq_count}, Dup: {dup_count}, Total: {total}, Dup perc: {perc}");
-        }
 
         protected void ReportTime(Stopwatch stopwatch, string prefix)
         {
@@ -135,16 +125,12 @@ namespace PhotoDedupe
         /// </summary>
         /// <param name="workDir"></param>
         /// <returns></returns>
-        public List<Task> Walk(string workDir, bool displayProgressBar=false)
+        public List<Task> Walk(string workDir, ProcessFileDel processFileDel, bool displayProgressBar=false)
         {
             var files = FilterFiles(Directory.GetFiles(workDir));
             var tasks = new List<Task>();
-            Parallel.ForEach(files, file =>
-            {
-                var fileHash = GetHashCRC32(file);
-                FileNames.AddOrUpdate(
-                    fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
-            });
+
+            processFileDel(files);
 
             var folders = Directory.GetDirectories(workDir);
 
@@ -152,7 +138,7 @@ namespace PhotoDedupe
             int count = 0;
             foreach (var folder in folders)
             {
-                foreach (var task in Walk(folder))
+                foreach (var task in Walk(folder, processFileDel))
                 {
                     tasks.Add(task);
                 }
@@ -163,6 +149,25 @@ namespace PhotoDedupe
             }
 
             return tasks;
+        }
+
+        protected void GetHashOfFiles(List<string> files)
+        {
+            Parallel.ForEach(files, file =>
+            {
+                var fileHash = GetHashCRC32(file);
+                FileDuplicates.Data.AddOrUpdate(fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
+            });
+        }
+
+        protected void GetSizeOfFiles(List<string> files)
+        {
+            Parallel.ForEach(files, file =>
+            {
+                var fileExt = Path.GetExtension(file);
+                long size = new FileInfo(file).Length;
+                FileSizes.Data.AddOrUpdate(fileExt, size, (k, v) => { return v + size; });
+            });
         }
         
         protected virtual List<string> FilterFiles(string[] filenames)
