@@ -19,11 +19,13 @@ namespace PhotoDedupe
         public FolderManager(string rootDir)
         {
             RootDir = rootDir;
-            FileDuplicates = new FileDuplicates();
-            FileSizes = new FileSizes();
+            FileHashDuplicates = new FileDuplicates();
+            FileSizeDuplicates = new FileDuplicates();
+            FileExtSizes = new FileSizes();
         }
-        public IDataHolder<string, List<string>> FileDuplicates { get; }
-        public IDataHolder<string, long> FileSizes { get; }
+        public IDataHolder<string, List<string>> FileHashDuplicates { get; }
+        public IDataHolder<string, List<string>> FileSizeDuplicates { get; }
+        public IDataHolder<string, long> FileExtSizes { get; }
 
         protected string RootDir;
         protected bool CompletedScan = false;
@@ -40,8 +42,9 @@ namespace PhotoDedupe
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
 
-            ProcessFileDel processFileDel = GetHashOfFiles;
-            processFileDel += GetSizeOfFiles;
+            ProcessFileDel processFileDel = GetHashAndSizeOfFiles;
+            //ProcessFileDel processFileDel = GetHashOfFiles;
+            //processFileDel += GetSizeOfFiles;
 
             var tasks = Walk(RootDir, processFileDel, true);
             var task = Task.WhenAll(tasks);
@@ -58,8 +61,8 @@ namespace PhotoDedupe
             stopwatch.Stop();
             ReportTime(stopwatch, "Walking dir took");
 
-            FileDuplicates.Report();
-            FileSizes.Report();
+            FileHashDuplicates.Report();
+            FileExtSizes.Report();
         }
 
         /// <summary>
@@ -75,10 +78,10 @@ namespace PhotoDedupe
 
             // lets keep the first one
             int idx = 0;
-            var pb = new ProgressBar(FileDuplicates.Data.Count);
+            var pb = new ProgressBar(FileHashDuplicates.Data.Count);
             Stopwatch stopwatch = new Stopwatch();
             stopwatch.Start();
-            foreach(var (key, val) in FileDuplicates.Data)
+            foreach(var (key, val) in FileHashDuplicates.Data)
             {
                 idx++;
 
@@ -88,7 +91,7 @@ namespace PhotoDedupe
                     {
                         File.Delete(val[i]);
                     }
-                   FileDuplicates.Data.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
+                   FileHashDuplicates.Data.AddOrUpdate(key, new List<string>(), (k, v) => { return new List<string>() { v[0] }; });
                 }
                 if (idx % 10 == 0)
                 {
@@ -97,7 +100,7 @@ namespace PhotoDedupe
             }
             stopwatch.Stop();
             ReportTime(stopwatch, "Deleting duplicate files took");
-            FileDuplicates.Report();
+            FileHashDuplicates.Report();
         }
 
 
@@ -122,6 +125,7 @@ namespace PhotoDedupe
 
         /// <summary>
         /// Walk folder recursively and add tasks to list to be awaited
+        /// displayProgressBar meant to be for top level usage
         /// </summary>
         /// <param name="workDir"></param>
         /// <returns></returns>
@@ -142,13 +146,54 @@ namespace PhotoDedupe
                 {
                     tasks.Add(task);
                 }
-                if (pb != null)
-                {
-                    pb.Refresh(count++, folder);
-                }
+                if (pb != null) { pb.Refresh(count++, folder); }
             }
+            if (pb != null) { pb.Refresh(count++, "Done"); }
 
             return tasks;
+        }
+
+        /// <summary>
+        /// Strategy 2. Fail early. Get file size first. If there is duplicate, then get hash.
+        /// Mutually exclusive from GetHashOfFiles
+        /// </summary>
+        /// <param name="files"></param>
+        protected void GetHashAndSizeOfFiles(List<string> files)
+        {
+            Parallel.ForEach(files, file =>
+            {
+                var fileExt = Path.GetExtension(file);
+                long size = new FileInfo(file).Length;
+                var stringSize = size.ToString();
+                var previouslyExist = FileSizeDuplicates.Data.ContainsKey(stringSize);
+                FileExtSizes.Data.AddOrUpdate(fileExt, size, (k, v) => { return v + size; });
+
+                // check if file size exists
+                if (previouslyExist)
+                {
+                    // case 2
+                    // if the file size exists in file duplicate, calculate hash for the file and then delete it
+                    List<string> curVal;
+                    if (FileHashDuplicates.Data.TryRemove(stringSize, out curVal))
+                    {
+                        // calculate hash for it, update dict, and then delete old one
+                        var prevFilePath = curVal[0];
+                        var prevFileHash = GetHashCRC32(prevFilePath);
+                        FileHashDuplicates.Data.AddOrUpdate(prevFileHash, new List<string>() { prevFilePath }, (k, v) => { v.Add(prevFilePath); return v; });
+                    }
+                    // calculate hash for the current file
+                    var fileHash = GetHashCRC32(file);
+                    FileHashDuplicates.Data.AddOrUpdate(fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
+
+                }
+                else
+                {
+                    // case 1
+                    // just add the file size as key, filepaths as value
+                    FileHashDuplicates.Data.AddOrUpdate(stringSize, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
+                    FileSizeDuplicates.Data.AddOrUpdate(stringSize, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
+                }
+            });
         }
 
         protected void GetHashOfFiles(List<string> files)
@@ -156,7 +201,7 @@ namespace PhotoDedupe
             Parallel.ForEach(files, file =>
             {
                 var fileHash = GetHashCRC32(file);
-                FileDuplicates.Data.AddOrUpdate(fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
+                FileHashDuplicates.Data.AddOrUpdate(fileHash, new List<string>() { file }, (k, v) => { v.Add(file); return v; });
             });
         }
 
@@ -166,7 +211,7 @@ namespace PhotoDedupe
             {
                 var fileExt = Path.GetExtension(file);
                 long size = new FileInfo(file).Length;
-                FileSizes.Data.AddOrUpdate(fileExt, size, (k, v) => { return v + size; });
+                FileExtSizes.Data.AddOrUpdate(fileExt, size, (k, v) => { return v + size; });
             });
         }
         

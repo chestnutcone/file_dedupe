@@ -52,7 +52,7 @@ namespace PhotoDedupe
             }
             
             // build hash for every image available
-            foreach(var files in FileDuplicates.Data.Values)
+            foreach(var files in FileHashDuplicates.Data.Values)
             {
                 var hash = BrightnessHash(files[0]);
                 ImageSimilarity.Data.AddOrUpdate(hash, files, (k, v) => {
